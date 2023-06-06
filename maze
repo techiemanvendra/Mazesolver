@@ -1,0 +1,776 @@
+/*  Sensors values incoming in these variables : !^!
+
+  A5  A4  A3  A2  A1  A0
+  FLV NLV MLV MRV NRV FRV
+  FL  NL  ML  MR  NR  FR     -> corresponding pins
+
+*/
+//all global
+// enables:
+
+#define TurningTime 200
+
+#define enR 11
+#define enL 10
+
+// QTR sensor input pins :
+#define FL A5
+#define NL A4
+#define ML A3
+#define MR A2
+#define NR A1
+#define FR A0
+
+#define FS 7 // Forward IR
+#define SS 8 // Stop IR / Maze done IR 
+// input for motor driver
+// these values are tested according to the pinouts
+// incase of problems only check your connections
+// opposite the out1->out2 and out3->out4 accordingly
+#define inL2 5
+#define inL1 4
+#define inR1 3
+#define inR2 2
+
+int j , i ;
+char path[100] ;
+int  index = 0 ;
+
+float CurrentTime = 1  , PreviousTime = 0 , TransitionTime = 400 * (-1);
+float delta ;
+float Vstandard = 180 ;
+float FLV = 0 , NLV = 0, MLV = 0, MRV = 0, NRV = 0, FRV = 0 ;
+float Rsum = 0 , Lsum = 0 ;
+// PD constants for straight function
+float P = 0.06;
+float D = 0.007 / 0.7 ;
+float current_error = 0 ;
+float previous_error = 0 ;
+float d_error = 0 ;
+int ForwardSensor , StopSensor; // the extra sensor should be tilted some bit forward side
+int flag = 0;
+///////////////////////////////////////////////////////////
+
+void setup() {
+
+  pinMode(FR, INPUT);
+  pinMode(NR, INPUT);
+  pinMode(MR, INPUT);
+  pinMode(ML, INPUT);
+  pinMode(NL, INPUT);
+  pinMode(FL, INPUT);
+
+  pinMode(enR, OUTPUT);
+  pinMode(enL, OUTPUT);
+
+  pinMode(inL1, OUTPUT);
+  pinMode(inL2, OUTPUT);
+  pinMode(inR1, OUTPUT);
+  pinMode(inR2, OUTPUT);
+
+  pinMode(FS, INPUT);
+  pinMode(SS, INPUT);
+
+  Serial.begin(9600);
+}
+
+void loop() {
+  // void loop is just for the sake of .ino structure.
+  // the main looping function is straight
+  straight();
+
+}
+
+///////////////////////////////////////////////////////////
+//                                           FUNCTIONS
+///////////////////////////////////////////
+
+void straight() {
+  // infinite straight
+  int i ;
+  while (1) {
+    /* For Debugging purposes
+      Serial.print(FLV);
+      Serial.print(",");
+      Serial.print(NLV);
+      Serial.print(",");
+      Serial.print(MLV);
+      Serial.print(",");
+      Serial.print(MRV);
+      Serial.print(",");
+      Serial.print(NRV);
+      Serial.print(",");
+      Serial.println(FRV);
+    */
+    ReadSensors();
+    Rsum =  MRV +  NRV +  FRV ;
+    Lsum =  FLV +  NLV +  MLV ;
+
+    CurrentTime = millis();
+    delta = (CurrentTime - PreviousTime) / 1000;
+
+    current_error =  Lsum - Rsum  ;
+    d_error = (current_error - previous_error) / delta ; // 10 miliseconds = 1/100 seconds
+    PreviousTime = CurrentTime ;
+
+    velocity_passer((current_error)*P + (d_error)*D );
+    previous_error = current_error ;
+    CheckCondition();
+  }
+}
+///////////////////////////////////////////////////////////
+void velocity_passer(float v) {
+  // velocity passer for straight function
+  // give left motor velocity
+  analogWrite(enL, Vstandard + v * (-1));
+  digitalWrite(inL1, 1);
+  digitalWrite(inL2, 0);
+
+  // give right motor velocity
+  analogWrite(enR, Vstandard + v);
+  digitalWrite(inR1, 1);
+  digitalWrite(inR2, 0);
+
+}
+///////////////////////////////////////////////////////////
+void velocity_passer_balance(float v) {
+  // velocity passer for balance function
+  // both tyres will run in opposite direction and balance the bot onto the line
+  if (v < 0) {
+    v = (-1) * v ;
+    analogWrite(enL, v);
+    analogWrite(enR, v);
+    digitalWrite(inL1, 1);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 1);
+  }
+  else {
+    analogWrite(enL, v);
+    analogWrite(enR, v);
+    digitalWrite(inL1, 0);
+    digitalWrite(inL2, 1);
+    digitalWrite(inR1, 1);
+    digitalWrite(inR2, 0);
+  }
+
+}
+
+///////////////////////////////////////////////////////
+void ReadSensors() {
+  // because of used sensor was giving unbalanced values
+  // thats why trimmimg is done here
+  FLV = analogRead(FL);
+  if (FLV < 500) {
+    FLV = 500;
+  }
+  if (FLV > 900) {
+    FLV = 900;
+  }
+
+  NLV = analogRead(NL);
+  if (NLV < 500) {
+    NLV = 500;
+  }
+  if (NLV > 900) {
+    NLV = 900;
+  }
+
+  MLV = analogRead(ML);
+  if (MLV < 500) {
+    MLV = 500;
+  }
+  if (MLV > 900) {
+    MLV = 900;
+  }
+
+  MRV = analogRead(MR);
+  if (MRV < 500) {
+    MRV = 500;
+  }
+  if (MRV > 900) {
+    MRV = 900;
+  }
+
+  NRV = analogRead(NR);
+  if (NRV < 500) {
+    NRV = 500;
+  }
+  if (NRV > 900) {
+    NRV = 900;
+  }
+
+  FRV = analogRead(FR);
+  if (FRV < 500) {
+    FRV = 500;
+  }
+  if (FRV > 900) {
+    FRV = 900;
+  }
+
+  ForwardSensor = digitalRead(FS);
+  StopSensor = digitalRead(SS);
+}
+
+////////////////////////////////////////////////////
+
+void TurnLeft() {
+  ReadSensors();
+  while (ForwardSensor == 0) {
+    // turn left
+    digitalWrite(inL1, 1);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 1);
+    delay(2);
+
+    // stop
+    digitalWrite(inL1, 0);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 0);
+    delay(1);
+    ReadSensors();
+  }
+  while ( ForwardSensor == 1) {
+    // turn left
+    digitalWrite(inL1, 1);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 1);
+    delay(2);
+
+    // stop
+    digitalWrite(inL1, 0);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 0);
+    delay(1);
+    ReadSensors();
+  }
+
+  Balancer();
+  TransitionTime = millis();
+}
+
+////////////////////////////////////////////////////
+void TurnRight() {
+  ReadSensors();
+  while (ForwardSensor == 0) {
+    // turn right
+    digitalWrite(inL1, 0);
+    digitalWrite(inL2, 1);
+    digitalWrite(inR1, 1);
+    digitalWrite(inR2, 0);
+    delay(2);
+
+    // stop
+    digitalWrite(inL1, 0);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 0);
+    delay(1);
+    ReadSensors();
+  }
+  while ( ForwardSensor == 1 ) {
+    // turn right
+    digitalWrite(inL1, 0);
+    digitalWrite(inL2, 1);
+    digitalWrite(inR1, 1);
+    digitalWrite(inR2, 0);
+    delay(2);
+
+    // stop
+    digitalWrite(inL1, 0);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 0);
+    delay(1);
+    ReadSensors();
+  }
+
+  Balancer();
+  TransitionTime = millis();
+}
+
+///////////////////////////////////////////////////////
+void TurnBack() {
+  // back should be slow to avoid slipping because it takes time
+  analogWrite(enL, 70);
+  analogWrite(enR, 70);
+
+  digitalWrite(inL1, 1);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 0);
+  digitalWrite(inR2, 1);
+  delay(450); // time in turning more than quarter turn and less than half turn (U turn)
+
+  ReadSensors();
+  while (ForwardSensor == 1) {
+    analogWrite(enL, 70);
+    analogWrite(enR, 70);
+
+    // turn left ( for U turn we have taken left as primary)
+    digitalWrite(inL1, 1);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 1);
+    delay(2);
+
+    // stop
+    digitalWrite(inL1, 0);
+    digitalWrite(inL2, 0);
+    digitalWrite(inR1, 0);
+    digitalWrite(inR2, 0);
+    delay(1);
+    ReadSensors();
+  }
+
+  Balancer();
+  TransitionTime = millis();
+}
+
+////////////////////////////////////////////////////
+void MildLeft() {
+  // turn left
+  digitalWrite(inL1, 1);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 0);
+  digitalWrite(inR2, 0);
+  delay(2);
+
+  // stop
+  digitalWrite(inL1, 0);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 0);
+  digitalWrite(inR2, 0);
+  delay(2);
+}
+////////////////////////////////////////////////////
+void Left() {
+  // turn left
+  digitalWrite(inL1, 1);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 0);
+  digitalWrite(inR2, 0);
+}
+void Right() {
+  // turn right
+  digitalWrite(inL1, 0);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 1);
+  digitalWrite(inR2, 0);
+}
+/////////////////////////////////////////////////////
+void MildRight() {
+  // turn right
+  digitalWrite(inL1, 0);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 1);
+  digitalWrite(inR2, 0);
+  delay(2);
+
+  // stop
+  digitalWrite(inL1, 0);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 0);
+  digitalWrite(inR2, 0);
+  delay(2);
+}
+
+/////////////////////////////////////////////////////
+void TurnStraight() {
+  analogWrite(enL, Vstandard);
+  analogWrite(enR, Vstandard);
+
+  // Giving Both Motors forward Velocities
+  digitalWrite(inL1, 1);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 1);
+  digitalWrite(inR2, 0);
+
+  delay(200); // in 200ms we leave the turning point behind
+  TransitionTime = millis();
+
+}
+
+//////////////////////////////////////////////////////
+void ApplyBreak() {
+  // stops motors :: breaking applied
+  analogWrite(enL, Vstandard);
+  analogWrite(enR, Vstandard);
+
+  digitalWrite(inL1, 0);
+  digitalWrite(inL2, 0);
+  digitalWrite(inR1, 0);
+  digitalWrite(inR2, 0);
+
+  delay(100); // timing for break
+}
+
+///////////////////////////////////////////////////////
+void Halt() {
+  // Both Run Done
+  // task completed
+  digitalWrite(inL1, 1);
+  digitalWrite(inL2, 1);
+  digitalWrite(inR1, 1);
+  digitalWrite(inR2, 1);
+
+  delay(1000000); // stop for the rest of your life ;(
+}
+
+////////////////////////////////////////////////////
+void Balancer() {
+  // balancer has its own set of PD constants thats why every variable has been
+  // taken some characters differently than the global ones.
+  float k , currenttime = 1 , previoustime = 0 , currenterror , previouserror , Delta , derror , p = 0.06 , d = 0.01;
+  k = millis();
+  while ((millis() - k) < 300) {
+    ReadSensors();
+    Rsum =  MRV +  NRV +  FRV ;
+    Lsum =  FLV +  NLV +  MLV ;
+
+    currenttime = millis();
+    Delta = (currenttime - previoustime) / 1000;
+
+    currenterror = Lsum - Rsum  ;
+    derror = (currenterror - previouserror) / Delta ;
+    previoustime = currenttime ;
+
+    velocity_passer_balance((currenterror)*p + (derror)*d );
+    previouserror = currenterror ;
+  }
+}
+
+///////////////////////////////////////////////////////
+void Done() {
+  // Initial maze roaming done
+  // stop motors for 10 seconds
+  // taking rest and processing the shortest path :)
+  digitalWrite(inL1, 1);
+  digitalWrite(inL2, 1);
+  digitalWrite(inR1, 1);
+  digitalWrite(inR2, 1);
+  delay(10000); // stop for 10 seconds
+
+  // short path algo
+  // some helping variables for iterating
+  j = 0 ;
+  i = 0 ;
+  while (j < index) {
+    if (path[j] == 'L' && path[j + 1] == 'B' && path[j + 2] == 'R') {
+      path[j] = 'B' ;
+      if (j + 4 >= index) {
+        path[j + 1] = path[j + 3];
+        path[j + 2] = '\n';
+        path[j + 3] = '\n';
+      }
+      else {
+        for (i = j + 3; i < index; i++) {
+          path[i - 2] = path[i];
+        }
+      }
+      j = 0 ;
+      index = index - 2 ;
+    }
+    else if (path[j] == 'L' && path[j + 1] == 'B' && path[j + 2] == 'S') {
+      path[j] = 'R' ;
+      if (j + 4 >= index) {
+        path[j + 1] = path[j + 3];
+        path[j + 2] = '\n';
+        path[j + 3] = '\n';
+      }
+      else {
+        for (i = j + 3; i < index; i++) {
+          path[i - 2] = path[i];
+        }
+      }
+      j = 0 ;
+      index = index - 2 ;
+    }
+    else if (path[j] == 'R' && path[j + 1] == 'B' && path[j + 2] == 'L') {
+      path[j] = 'B' ;
+      if (j + 4 >= index) {
+        path[j + 1] = path[j + 3];
+        path[j + 2] = '\n';
+        path[j + 3] = '\n';
+      }
+      else {
+        for (i = j + 3; i < index; i++) {
+          path[i - 2] = path[i];
+        }
+      }
+      j = 0 ;
+      index = index - 2 ;
+    }
+    else if (path[j] == 'S' && path[j + 1] == 'B' && path[j + 2] == 'L') {
+      path[j] = 'R' ;
+      if (j + 4 >= index) {
+        path[j + 1] = path[j + 3];
+        path[j + 2] = '\n';
+        path[j + 3] = '\n';
+      }
+      else {
+        for (i = j + 3; i < index; i++) {
+          path[i - 2] = path[i];
+        }
+      }
+      j = 0 ;
+      index = index - 2 ;
+    }
+    else if (path[j] == 'S' && path[j + 1] == 'B' && path[j + 2] == 'S') {
+      path[j] = 'B' ;
+      if (j + 4 >= index) {
+        path[j + 1] = path[j + 3];
+        path[j + 2] = '\n';
+        path[j + 3] = '\n';
+      }
+      else {
+        for (i = j + 3; i < index; i++) {
+          path[i - 2] = path[i];
+        }
+      }
+      j = 0 ;
+      index = index - 2 ;
+    }
+    else if (path[j] == 'L' && path[j + 1] == 'B' && path[j + 2] == 'L') {
+      path[j] = 'S' ;
+      if (j + 4 >= index) {
+        path[j + 1] = path[j + 3];
+        path[j + 2] = '\n';
+        path[j + 3] = '\n';
+      }
+      else {
+        for (i = j + 3; i < index; i++) {
+          path[i - 2] = path[i];
+        }
+      }
+      j = 0 ;
+      index = index - 2 ;
+    }
+    else {
+      j++;
+    }
+  }
+  // Now its time to start maze solution Run ( sorted path Run )
+  // start with taking index 0
+  index = 0 ;
+  ShortestPathRun();
+
+}
+
+/////////////////////////////////////////////////////
+void CheckCondition() {
+
+  ReadSensors();
+  if (isWhite(NLV) && isBlack(NRV)) {
+    MildLeft();
+  }
+  ReadSensors();
+  if (isWhite(NRV) && isBlack(NLV)) {
+    MildRight();
+  }
+  // Read Sensors values first
+  ReadSensors();
+
+  // if any left is possible
+  if (isWhite(FLV) && isWhite(MLV) ) {
+    if (ForwardSensor == 0 && StopSensor == 0 ) {
+      Done();
+    }
+    ApplyBreak();
+    if ((millis() - TransitionTime ) > 250) {
+      path[index] = 'L';
+      index++;
+    }
+    TurnLeft();
+    return ;
+  }
+  // Note: Forward sensor gives 1 when there is a black
+  // only right possible
+
+  if (isBlack(FLV) && isBlack(NLV) && isWhite(NRV) && isWhite(MRV) && isWhite(FRV) && ForwardSensor == 1) {
+    Right();
+    delay(100);
+  if (isBlack(FLV) && isBlack(NLV) && isWhite(NRV) && isWhite(MRV) && isWhite(FRV) && ForwardSensor == 1){  
+    ApplyBreak();
+    if ((millis() - TransitionTime ) > 250) {
+      path[index] = 'R';
+      index++;
+    }
+    TurnRight();
+    return ;
+  }
+  }
+
+
+  // right and forward possible
+  if (isBlack(FLV) && isWhite(FRV) && ForwardSensor == 0) {
+    if ((millis() - TransitionTime ) > 250) {
+      path[index] = 'S';
+      index++;
+    }
+    TurnStraight();
+    return ;
+  }
+
+  // If all Black ahead : No way forward
+  if (isBlack(FRV) && isBlack(NRV) && isBlack(MRV) && isBlack(MLV)
+      && isBlack(NLV) && isBlack(FLV)) {
+    ApplyBreak();
+    if ((millis() - TransitionTime ) > 250) {
+      path[index] = 'B';
+      index++;
+    }
+    TurnBack();
+    return ;
+  }
+
+}
+
+// This function returns True when there is a black
+// takes analog value in parameter
+bool isBlack(float x) {
+  ///return false ;
+  if (x >= 800)
+    return true;
+  else
+    return false;
+}
+
+// This function returns True when there is a White
+// takes analog value in parameter
+bool isWhite(float x) {
+  ////return true ;
+  if (x  < 750)
+    return true;
+  else
+    return false;
+}
+
+//////////////////////////////////////////////////////////////////
+void ShortestPathRun() {
+  index = 0 ;
+  while (1) {
+
+    ReadSensors();
+    Rsum =  MRV +  NRV +  FRV ;
+    Lsum =  FLV +  NLV +  MLV ;
+
+    CurrentTime = millis();
+    delta = (CurrentTime - PreviousTime) / 1000;
+
+    current_error = Lsum - Rsum  ;
+    d_error = (current_error - previous_error) / delta ; // 10 miliseconds = 1/100 seconds
+    PreviousTime = CurrentTime ;
+
+    velocity_passer((current_error)*P + (d_error)*D );
+    previous_error = current_error ;
+
+    ReadSensors();
+    if (isWhite(NLV) && isBlack(NRV)) {
+      MildLeft();
+    }
+    if (isWhite(NRV) && isBlack(NLV)) {
+      MildRight();
+    }
+    // if any left is possible
+    if (isWhite(FLV) && isWhite(NLV) && isWhite(MLV)) {
+      if (ForwardSensor == 0 && StopSensor == 0  ) {
+        Halt();
+      }
+
+      if (path[index] == 'L') {
+        ApplyBreak();
+        TurnLeft();
+        index++;
+      }
+      else if (path[index] == 'R') {
+        ApplyBreak();
+        TurnRight();
+        index++;
+      }
+      else if (path[index] == 'B') {
+        ApplyBreak();
+        TurnBack();
+        index++;
+      }
+      else if (path[index] == 'S') {
+        TurnStraight();
+        index++;
+      }
+    }
+
+    // Note: Forward sensor gives 1 when there is a black
+    // only right possible
+    if (isBlack(FLV) && isBlack(NLV) && isWhite(NRV) && isWhite(MRV) && isWhite(FRV) && ForwardSensor == 1) {
+      if (path[index] == 'L') {
+        ApplyBreak();
+        TurnLeft();
+        index++;
+      }
+      else if (path[index] == 'R') {
+        ApplyBreak();
+        TurnRight();
+        index++;
+      }
+      else if (path[index] == 'B') {
+        ApplyBreak();
+        TurnBack();
+        index++;
+      }
+      else if (path[index] == 'S') {
+        TurnStraight();
+        index++;
+      }
+    }
+
+    // right and forward possible
+    if (isBlack(FLV) && isWhite(FRV) && ForwardSensor == 0) {
+      if (path[index] == 'L') {
+        ApplyBreak();
+        TurnLeft();
+        index++;
+      }
+      else if (path[index] == 'R') {
+        ApplyBreak();
+        TurnRight();
+        index++;
+      }
+      else if (path[index] == 'B') {
+        ApplyBreak();
+        TurnBack();
+        index++;
+      }
+      else if (path[index] == 'S') {
+        TurnStraight();
+        index++;
+      }
+    }
+
+    // If all Black ahead : No way forward
+    if (isBlack(FLV) && isBlack(NLV) && isBlack(MLV) && isBlack(MRV)
+        && isBlack(NRV) && isBlack(FRV)) {
+      if (path[index] == 'L') {
+        ApplyBreak();
+        TurnLeft();
+        index++;
+      }
+      else if (path[index] == 'R') {
+        ApplyBreak();
+        TurnRight();
+        index++;
+      }
+      else if (path[index] == 'B') {
+        ApplyBreak();
+        TurnBack();
+        index++;
+      }
+      else if (path[index] == 'S') {
+        TurnStraight();
+        index++;
+      }
+    }
+  }
+}
